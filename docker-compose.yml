@@ -1,0 +1,7 @@
+version: '3.0'
+
+services:
+  kms:
+    image: kurento/kurento-media-server
+    ports:
+    - 8888:8888
