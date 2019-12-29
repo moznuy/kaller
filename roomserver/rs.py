@@ -1,12 +1,14 @@
 import asyncio
 import logging
 from asyncio import Future
+from contextlib import suppress
 from pprint import pprint
 from typing import Dict, Awaitable
 
 import aiohttp
 from aiohttp import web
 
+from roomserver.runner import run_app
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('rs')
@@ -230,27 +232,30 @@ async def send_custom_request(out_q: asyncio.Queue):
 
 
 async def media_server(app):
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect('ws://127.0.0.1:8888/kurento') as socket:
-            logger.debug('Connected')
-            q = asyncio.Queue()
-            i_q = asyncio.Queue()
-            t = asyncio.create_task(media_server_sender(socket, q))
-            j = asyncio.create_task(json_rpc_handler(i_q, q))
-            ccc = asyncio.create_task(send_custom_request(q))
-            try:
-                async for msg in socket:  # type: aiohttp.WSMessage
-                    await i_q.put(msg.json())
-            except asyncio.CancelledError:
-                logger.debug('media_server Canceled')
-            finally:
-                if app['gunicorn']:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect('ws://127.0.0.1:8888/kurento') as socket:  # TODO: retrygit log\
+                logger.debug('Connected')
+                q = asyncio.Queue()
+                i_q = asyncio.Queue()
+                t = asyncio.create_task(media_server_sender(socket, q))
+                j = asyncio.create_task(json_rpc_handler(i_q, q))
+                ccc = asyncio.create_task(send_custom_request(q))
+                try:
+                    async for msg in socket:  # type: aiohttp.WSMessage
+                        await i_q.put(msg.json())
+                except asyncio.CancelledError:
+                    logger.debug('media_server Canceled')
+                finally:
+                    # if app['gunicorn']:
                     j.cancel()
-                await j
-                await q.put(None)
-                await q.join()
-                await t
-                logger.debug('media_server Finished')
+                    await j
+                    await q.put(None)
+                    await q.join()
+                    await t
+                    logger.debug('media_server Finished')
+    except Exception:
+        logger.exception('!!!!!!')
 
 
 async def start_background_tasks(app):
@@ -260,8 +265,8 @@ async def start_background_tasks(app):
 
 async def cleanup_background_tasks(app):
     logger.debug('Stop')
-    if app['gunicorn']:
-        app['media_server'].cancel()
+    # if app['gunicorn']:
+    app['media_server'].cancel()
     await app['media_server']
     logger.debug('Stopped')
 
@@ -270,8 +275,9 @@ app = web.Application()
 app.add_routes([web.get('/ws', websocket_handler)])
 app.on_startup.append(start_background_tasks)
 app.on_cleanup.append(cleanup_background_tasks)
-app.setdefault('gunicorn', True)
+# app.setdefault('gunicorn', True)
 
 if __name__ == '__main__':
-    app['gunicorn'] = False
-    web.run_app(app)
+    # app['gunicorn'] = False
+    with suppress(asyncio.CancelledError):
+        run_app(app)
